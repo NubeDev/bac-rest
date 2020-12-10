@@ -2,6 +2,8 @@ Flask~=1.1.2
 Flask-RESTful
 Flask-JWT
 Flask-SQLAlchemy
+Flask-Migrate==2.5.3
+Flask-Script==2.0.6
 uwsgi
 BAC0
 SQLAlchemy~=1.3.19
