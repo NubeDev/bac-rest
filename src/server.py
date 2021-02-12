@@ -62,7 +62,6 @@ class GunicornFlaskApplication(BaseApplication, ABC):
     def wsgi(self):
         output = super(GunicornFlaskApplication, self).wsgi()
         with self.application.app_context():
-            db.create_all()
             from src.background import Background
             Background.run()
         return output
