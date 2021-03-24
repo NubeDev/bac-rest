@@ -44,7 +44,7 @@ def create_app(app_setting) -> Flask:
 
     def register_router(_app) -> Flask:
         from src.routes import bp_network, bp_device, bp_point, bp_generic, bp_modbus, bp_mapping_mp_gbp, bp_sync, \
-            bp_system, bp_schedule
+            bp_system, bp_schedule, bp_setting
         _app.register_blueprint(bp_network)
         _app.register_blueprint(bp_device)
         _app.register_blueprint(bp_point)
@@ -54,6 +54,7 @@ def create_app(app_setting) -> Flask:
         _app.register_blueprint(bp_sync)
         _app.register_blueprint(bp_system)
         _app.register_blueprint(bp_schedule)
+        _app.register_blueprint(bp_setting)
         return _app
 
     setup(app)

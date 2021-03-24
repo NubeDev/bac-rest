@@ -11,6 +11,7 @@ from registry.registry import RubixRegistry
 from src.handlers.exception import exception_handler
 from src.models.point.model_point import PointModel
 from src.models.point.model_point_store_history import PointStoreHistoryModel
+from src.models.setting.model_setting_postgres import PostgresSettingModel
 from src.services.histories.history_binding import HistoryBinding
 from src.setting import PostgresSetting
 from src.utils import Singleton
@@ -29,6 +30,8 @@ class PostgreSQL(HistoryBinding, metaclass=Singleton):
         self.__points_table_name: str = ''
         self.__points_values_table_name: str = ''
         self.__points_tags_table_name: str = ''
+        self.__schedule_job = None
+        self.__postgres_setting: Union[PostgresSettingModel, None] = None
 
     @property
     def config(self) -> Union[PostgresSetting, None]:
@@ -40,41 +43,61 @@ class PostgreSQL(HistoryBinding, metaclass=Singleton):
     def disconnect(self):
         self.__is_connected = False
 
-    def setup(self, config: PostgresSetting):
+    def start_postgres(self, config: PostgresSetting):
         self.__config = config
-        self.__points_table_name: str = self.config.table_name
+        self.__postgres_setting = PostgresSettingModel.create_default_if_does_not_exists(self.config)
+        self.__points_table_name: str = self.__postgres_setting.table_name
         self.__points_values_table_name: str = f'{self.__points_table_name}_values'
         self.__points_tags_table_name: str = f'{self.__points_table_name}_tags'
+        self.loop_forever()
 
-        while not self.status():
-            self.connect()
-            time.sleep(self.config.attempt_reconnect_secs)
-        if self.status():
-            logger.info("Registering PostgreSQL for scheduler job")
-            # schedule.every(5).seconds.do(self.sync)  # for testing
-            schedule.every(self.config.timer).minutes.do(self.sync)
-            while True:
-                schedule.run_pending()
-                time.sleep(1)
-        else:
-            logger.error("PostgreSQL can't be registered with not working client details")
+    def loop_forever(self):
+        while True:
+            try:
+                while not self.status():
+                    self.connect(self.__postgres_setting)
+                    time.sleep(self.__postgres_setting.attempt_reconnect_secs)
+                if self.status():
+                    if not self.__schedule_job:
+                        logger.info("Registering PostgreSQL for scheduler job")
+                        # self.__schedule_job = schedule.every(5).seconds.do(self.sync)  # for testing
+                        self.__schedule_job = schedule.every(self.__postgres_setting.timer).minutes.do(self.sync)
+                    schedule.run_pending()
+                else:
+                    logger.error("PostgreSQL can't be registered with not working client details")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(e)
+                logger.warning("PostgreSQL is not connected, waiting for PostgreSQL connection...")
+                time.sleep(self.__postgres_setting.attempt_reconnect_secs)
 
-    def connect(self):
+    def restart_postgres(self, postgres_setting):
+        self.disconnect()
+        if self.__schedule_job:
+            schedule.clear()
+        self.__reset_variable()
+        self.__postgres_setting = postgres_setting
+
+    def connect(self, postgres_setting):
         if self.__client:
             self.__client.close()
         try:
-            self.__client = psycopg2.connect(host=self.config.host,
-                                             port=self.config.port,
-                                             dbname=self.config.dbname,
-                                             user=self.config.user,
-                                             password=self.config.password,
-                                             sslmode=self.config.ssl_mode,
-                                             connect_timeout=self.config.connect_timeout)
+            self.__client = psycopg2.connect(host=postgres_setting.host,
+                                             port=postgres_setting.port,
+                                             dbname=postgres_setting.dbname,
+                                             user=postgres_setting.user,
+                                             password=postgres_setting.password,
+                                             sslmode=postgres_setting.ssl_mode,
+                                             connect_timeout=postgres_setting.connect_timeout)
             self.__is_connected = True
             self._create_table_if_not_exists()
         except Exception as e:
             self.__is_connected = False
             logger.error(f'Connection Error: {str(e)}')
+
+    def __reset_variable(self):
+        self.__schedule_job = None
+        self.__wires_plat = None
 
     @exception_handler
     def sync(self):

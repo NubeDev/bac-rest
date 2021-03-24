@@ -10,6 +10,7 @@ from src import InfluxSetting
 from src.handlers.exception import exception_handler
 from src.models.point.model_point import PointModel
 from src.models.point.model_point_store_history import PointStoreHistoryModel
+from src.models.setting.model_setting_influx import InfluxSettingModel
 from src.services.histories.history_binding import HistoryBinding
 from src.utils import Singleton
 
@@ -23,6 +24,8 @@ class InfluxDB(HistoryBinding, metaclass=Singleton):
         self.__client = None
         self.__wires_plat = None
         self.__is_connected = False
+        self.__schedule_job = None
+        self.__influx_setting = None
 
     @property
     def config(self) -> InfluxSetting:
@@ -34,37 +37,63 @@ class InfluxDB(HistoryBinding, metaclass=Singleton):
     def disconnect(self):
         self.__is_connected = False
 
-    def setup(self, config: InfluxSetting):
+    def start_influx(self, config: InfluxSetting):
         self.__config = config
-        while not self.status():
-            self.connect()
-            time.sleep(self.config.attempt_reconnect_secs)
+        self.__influx_setting = InfluxSettingModel.create_default_if_does_not_exists(self.config)
+        self.loop_forever()
 
-        if self.status():
-            logger.info("Registering InfluxDB for scheduler job")
-            # schedule.every(5).seconds.do(self.sync)  # for testing
-            schedule.every(self.config.timer).minutes.do(self.sync)
-            while True:
-                schedule.run_pending()
-                time.sleep(1)
-        else:
-            logger.error("InfluxDB can't be registered with not working client details")
+    def loop_forever(self):
+        while True:
+            try:
+                while not self.status():
+                    self.connect(self.__influx_setting)
+                    time.sleep(self.__influx_setting.attempt_reconnect_secs)
 
-    def connect(self):
+                if self.status():
+                    if not self.__schedule_job:
+                        logger.info("Registering InfluxDB for scheduler job")
+                        # self.__schedule_job = schedule.every(5).seconds.do(self.sync)  # for testing
+                        self.__schedule_job = schedule.every(self.__influx_setting.timer).minutes.do(self.sync)
+                    schedule.run_pending()
+                else:
+                    logger.error("InfluxDB can't be registered with not working client details")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(e)
+                logger.warning("InfluxDB is not connected, waiting for InfluxDB connection...")
+                time.sleep(self.__influx_setting.attempt_reconnect_secs)
+
+    def restart_influx(self, influx_setting):
+        self.disconnect()
+        if self.__schedule_job:
+            schedule.clear()
+        self.__reset_variable()
+        self.__influx_setting = influx_setting
+
+    def connect(self, influx_setting):
         if self.__client:
             self.__client.close()
 
         try:
-            self.__client = InfluxDBClient(host=self.config.host, port=self.config.port, username=self.config.username,
-                                           password=self.config.password, database=self.config.database,
-                                           ssl=self.config.ssl, verify_ssl=self.config.verify_ssl,
-                                           timeout=self.config.timeout, retries=self.config.retries,
-                                           path=self.config.path)
+            self.__client = InfluxDBClient(host=influx_setting.host,
+                                           port=influx_setting.port,
+                                           username=influx_setting.username,
+                                           password=influx_setting.password,
+                                           database=influx_setting.database,
+                                           ssl=influx_setting.ssl,
+                                           verify_ssl=influx_setting.verify_ssl,
+                                           timeout=influx_setting.timeout,
+                                           retries=influx_setting.retries,
+                                           path=influx_setting.path)
             self.__client.ping()
             self.__is_connected = True
         except Exception as e:
             self.__is_connected = False
             logger.error(f'Connection Error: {str(e)}')
+
+    def __reset_variable(self):
+        self.__schedule_job = None
+        self.__wires_plat = None
 
     @exception_handler
     def sync(self):
@@ -114,7 +143,7 @@ class InfluxDB(HistoryBinding, metaclass=Singleton):
                     'fault_message': point_store_history.fault_message,
                 }
                 row = {
-                    'measurement': self.__config.measurement,
+                    'measurement': self.__influx_setting.measurement,
                     'tags': tags,
                     'time': point_store_history.ts_value,
                     'fields': fields
@@ -123,12 +152,12 @@ class InfluxDB(HistoryBinding, metaclass=Singleton):
         if len(store):
             logger.debug(f"Storing: {store}")
             self.__client.write_points(store)
-            logger.info(f'Stored {len(store)} rows on {self.config.measurement} measurement')
+            logger.info(f'Stored {len(store)} rows on {self.__influx_setting.measurement} measurement')
         else:
             logger.debug("Nothing to store, no new records")
 
     def _get_point_last_sync_id(self, point_uuid):
-        query = f"SELECT MAX(id), point_uuid FROM {self.config.measurement} WHERE point_uuid='{point_uuid}'"
+        query = f"SELECT MAX(id), point_uuid FROM {self.__influx_setting.measurement} WHERE point_uuid='{point_uuid}'"
         result_set = self.__client.query(query)
         points = list(result_set.get_points())
         if len(points) == 0:

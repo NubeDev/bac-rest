@@ -33,6 +33,7 @@ from src.resources.resource_device import DeviceResourceByUUID, DeviceResourceBy
 from src.resources.resource_network import NetworkResourceByUUID, NetworkResourceByName, NetworkResourceList
 from src.resources.resource_point import PointResourceByUUID, PointResourceByName, PointResourceList
 from src.resources.resource_schedule import ScheduleResourceByUUID, ScheduleResourceList
+from src.resources.resource_setting import PostgresSettingResource, InfluxSettingResource
 from src.system.resources.memory import GetSystemMem
 from src.system.resources.ping import Ping
 
@@ -113,3 +114,9 @@ bp_schedule = Blueprint('schedules', __name__, url_prefix='/api/schedules')
 api_schedule = Api(bp_schedule)
 api_schedule.add_resource(ScheduleResourceList, '')
 api_schedule.add_resource(ScheduleResourceByUUID, '/uuid/<string:uuid>')
+
+bp_setting = Blueprint('settings', __name__, url_prefix='/api/settings')
+api_setting = Api(bp_setting)
+api_setting.add_resource(InfluxSettingResource, '/influx')
+api_setting.add_resource(PostgresSettingResource, '/postgres')
+
